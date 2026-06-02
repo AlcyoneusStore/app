@@ -1,0 +1,154 @@
+{
+  "app_name": "Finso",
+  "personality": "6 Glass / Luxe DARK fused with 7 Dark-First Utility for data screens",
+  "personality_one_liner": "A cinematic, premium fintech experience where deep atmospheric space meets high-precision, glowing neon data.",
+  "color": {
+    "surface": "#050816",
+    "onSurface": "#FFFFFF",
+    "surfaceSecondary": "#0A0E27",
+    "onSurfaceSecondary": "#A0A8C0",
+    "surfaceTertiary": "#111836",
+    "onSurfaceTertiary": "#FFFFFF",
+    "surfaceInverse": "#FFFFFF",
+    "onSurfaceInverse": "#050816",
+    "brand": "#0066FF",
+    "brandPrimary": "#0066FF",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#0047B3",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "rgba(0, 102, 255, 0.15)",
+    "onBrandTertiary": "#0066FF",
+    "success": "#00FF94",
+    "onSuccess": "#00331A",
+    "warning": "#FFB800",
+    "onWarning": "#332500",
+    "error": "#FF3366",
+    "onError": "#FFFFFF",
+    "info": "#0090FF",
+    "onInfo": "#FFFFFF",
+    "border": "rgba(255, 255, 255, 0.08)",
+    "borderStrong": "rgba(255, 255, 255, 0.15)",
+    "divider": "rgba(255, 255, 255, 0.06)"
+  },
+  "typography": {
+    "displayFontFamily": "Space Grotesk",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 28,
+      "3xl": 40,
+      "4xl": 56
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room for cinematic feel; dense, highly structured layouts for charts and P&L data.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use heavy blur (expo-blur) on the bottom tab bar and sticky headers.",
+      "Apply glass effect over abstract background imagery for holographic cards.",
+      "Use subtle translucent brandTertiary tints behind active segment toggles."
+    ],
+    "dont's": [
+      "Do not blur dense data rows (like P&L list items) — keep them solid for readability.",
+      "Never put thin typography directly on busy textures without a dark scrim."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-blur",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler",
+    "charts": "react-native-gifted-charts"
+  },
+  "screens": [
+    {
+      "name": "Dashboard",
+      "purpose": "A cinematic overview of the user's total net worth with currency toggles and visual breakdown.",
+      "states": {
+        "loading": "Centered glowing brand spinner on deep navy.",
+        "empty": "Glassy card prompting 'Add your first account'.",
+        "error": "Soft error toast with a 'Retry' action."
+      },
+      "layout": "Header: profile/settings. Hero: Huge 'Space Grotesk' net worth counter center-aligned, with a sleek segmented control underneath (TL | USD | RUB). Below: An interactive donut chart with a glassmorphism overlay card. Ensure gradient/blur highlights behind the chart."
+    },
+    {
+      "name": "Wallet (Cards & Accounts)",
+      "purpose": "Simulates a premium digital wallet with physical-feeling holographic cards.",
+      "states": {
+        "loading": "Skeleton loaders matching card dimensions.",
+        "empty": "Abstract minimalist illustration of an empty wallet with a primary 'Add Card' CTA.",
+        "error": "Retry boundary over the card carousel."
+      },
+      "layout": "Top half: Horizontal paging carousel of holographic cards (using expo-image backdrops with expo-blur overlay). Each card displays Limit, Debt, and Cut-off date cleanly. Bottom half: Vertical list of linked bank accounts, using minimalist dividers."
+    },
+    {
+      "name": "Expenses",
+      "purpose": "Utility-first breakdown of spending by categories.",
+      "states": {
+        "loading": "List of glowing skeleton bars.",
+        "empty": "No expenses logged this month.",
+        "error": "Failed to fetch transactions."
+      },
+      "layout": "Sticky header with Month selector. Large aggregate expense number. Below: Vertical list of categories (Market, Entertainment, Bills). Each row uses a tinted icon container (surfaceTertiary) and shows a progress bar against a budget."
+    },
+    {
+      "name": "Investments",
+      "purpose": "Live tracking of Stocks, Crypto, Funds, and Gold with distinct P&L indicators.",
+      "states": {
+        "loading": "Pulsing list items.",
+        "empty": "'Build your portfolio' CTA with a glass-tinted illustration.",
+        "error": "Cannot load live market data."
+      },
+      "layout": "Top: Total Portfolio Value and a large neon green (or red) 24h P&L chip. Filter chips below (All, Stocks, Crypto, Gold). Vertical scrolling list of assets. Each asset row shows Asset Name, Amount Held, Cost Basis, and Current Value, with a prominent glowing neon P&L percentage on the right edge."
+    }
+  ],
+  "images": {
+    "dashboard_glow": {
+      "url": "https://images.pexels.com/photos/7630006/pexels-photo-7630006.jpeg",
+      "alt": "Abstract dark blue textured background with blurred elements"
+    },
+    "holographic_card_1": {
+      "url": "https://images.unsplash.com/photo-1535376472810-5d229c65da09",
+      "alt": "multicolored abstract painting for holographic effect"
+    },
+    "holographic_card_2": {
+      "url": "https://images.pexels.com/photos/10997877/pexels-photo-10997877.jpeg",
+      "alt": "Fluid art swirling blue and black tones"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Theme Strictness: The app is strictly DARK MODE. Use the exact hex codes provided (#050816 for background, #00FF94 for success/positive values, #0066FF for constants).",
+    "Net Worth Counter: Use 'Space Grotesk' for all large numbers and metrics. The Dashboard counter should be huge (at least 40pt or 56pt) and visually dominate the top half of the screen.",
+    "Holographic Cards: In the Wallet screen, use the provided 'holographic_card_1' and 'holographic_card_2' images as `expo-image` backgrounds for the cards, with an `expo-linear-gradient` scrim and `expo-blur` over them to create a sleek, physical-yet-digital glass card feel.",
+    "Data Density: For Expenses and Investments, rely on 'Satoshi' for readable body text. Use right-aligned monospaced-style numerical values if possible. Ensure the P&L values use the `#00FF94` (neon green) and `#FF3366` (red) explicitly.",
+    "Currency Toggle: The TL/USD/RUB toggle should be a custom glassmorphic segmented control, not a default OS picker.",
+    "Haptics: Add haptic feedback to the currency toggle, tab changes, and card swiping.",
+    "DO NOT use pure black (#000000); always use the deep navy #050816 surface color."
+  ]
+}
