@@ -34,8 +34,8 @@ export default function AddInvestmentScreen() {
   const save = async () => {
     const q = parseFloat(quantity.replace(',', '.'));
     const cb = parseFloat(costBasis.replace(',', '.'));
-    const cp = parseFloat(currentPrice.replace(',', '.'));
-    if (!symbol.trim() || !q || !cb || !cp) return;
+    const cp = currentPrice ? parseFloat(currentPrice.replace(',', '.')) : cb;
+    if (!symbol.trim() || !q || !cb) return;
     setSaving(true);
     try {
       const data = {
@@ -164,10 +164,10 @@ export default function AddInvestmentScreen() {
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>Güncel Fiyat</Text>
+                <Text style={styles.fieldLabel}>Güncel Fiyat (ops.)</Text>
                 <TextInput
                   testID="inv-price"
-                  placeholder="0.00"
+                  placeholder="boş = maliyetle aynı"
                   placeholderTextColor={theme.colors.onSurfaceDim}
                   value={currentPrice}
                   onChangeText={setCurrentPrice}

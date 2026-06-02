@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import ScreenContainer from '@/src/components/ScreenContainer';
 import GlassCard from '@/src/components/GlassCard';
@@ -27,14 +27,12 @@ export default function InvestmentsScreen() {
     try {
       const data = await api.listInvestments();
       setItems(data);
-    } catch (e) {
-      console.warn(e);
-    } finally {
-      setRefreshing(false);
-    }
+    } catch (e) { console.warn(e); }
+    finally { setRefreshing(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const onRefresh = () => { setRefreshing(true); load(); };
 
@@ -58,13 +56,22 @@ export default function InvestmentsScreen() {
     <ScreenContainer testID="investments-screen" refreshing={refreshing} onRefresh={onRefresh}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Yatırımlar</Text>
-        <Pressable
-          testID="add-investment-btn"
-          style={styles.addBtn}
-          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/add-investment'); }}
-        >
-          <Ionicons name="add" size={22} color="#fff" />
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Pressable
+            testID="update-prices-btn"
+            style={[styles.iconBtn, { backgroundColor: theme.colors.successDim, borderColor: theme.colors.success }]}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/update-prices'); }}
+          >
+            <Ionicons name="pulse" size={18} color={theme.colors.success} />
+          </Pressable>
+          <Pressable
+            testID="add-investment-btn"
+            style={styles.addBtn}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/add-investment'); }}
+          >
+            <Ionicons name="add" size={22} color="#fff" />
+          </Pressable>
+        </View>
       </View>
 
       {/* Hero */}
@@ -124,6 +131,7 @@ function InvestmentRow({ inv }: { inv: any }) {
   const plPct = costOrig > 0 ? (plOrig / costOrig) * 100 : 0;
   const positive = plOrig >= 0;
   const valueTry = toTry(valueOrig, inv.currency);
+  const plTry = toTry(plOrig, inv.currency);
   const payload = encodeURIComponent(JSON.stringify(inv));
 
   return (
@@ -138,11 +146,17 @@ function InvestmentRow({ inv }: { inv: any }) {
             <Text style={styles.invMeta}>
               {inv.quantity} {inv.symbol} · Maliyet: {formatMoney(inv.cost_basis, inv.currency, { decimals: 2 })}
             </Text>
+            <Text style={styles.invMeta}>
+              Güncel: {formatMoney(inv.current_price, inv.currency, { decimals: 2 })}
+            </Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.invValue}>{formatMoney(fromTry(valueTry), currency, { decimals: 2 })}</Text>
             <Text style={[styles.invPL, { color: positive ? theme.colors.success : theme.colors.danger }]}>
               {positive ? '▲' : '▼'} {plPct.toFixed(2)}%
+            </Text>
+            <Text style={[styles.invPLAmt, { color: positive ? theme.colors.success : theme.colors.danger }]}>
+              {positive ? '+' : '-'}{formatMoney(Math.abs(fromTry(plTry)), currency, { decimals: 2 })}
             </Text>
           </View>
         </View>
@@ -154,6 +168,7 @@ function InvestmentRow({ inv }: { inv: any }) {
 const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, paddingBottom: 12 },
   title: { color: theme.colors.onSurface, fontSize: 28, fontWeight: '900', letterSpacing: -1 },
+  iconBtn: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   addBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.brand, alignItems: 'center', justifyContent: 'center' },
   hero: { alignItems: 'center', paddingVertical: 16 },
   heroLabel: { color: theme.colors.onSurfaceMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
@@ -169,4 +184,5 @@ const styles = StyleSheet.create({
   invMeta: { color: theme.colors.onSurfaceMuted, fontSize: 11, marginTop: 2 },
   invValue: { color: theme.colors.onSurface, fontSize: 15, fontWeight: '800' },
   invPL: { fontSize: 12, fontWeight: '800', marginTop: 4 },
+  invPLAmt: { fontSize: 11, fontWeight: '700', marginTop: 2 },
 });

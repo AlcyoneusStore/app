@@ -17,7 +17,8 @@ export default function SettingsScreen() {
   const [resetting, setResetting] = React.useState(false);
 
   const rows: Row[] = [
-    { id: 'rates', icon: 'swap-horizontal', iconColor: theme.colors.brand, title: 'Döviz Kurları', subtitle: 'Otomatik veya manuel kur ayarla', onPress: () => router.push('/settings-rates') },
+    { id: 'account', icon: 'person-circle', iconColor: theme.colors.brand, title: 'Hesap Bilgileri', subtitle: 'Kullanıcı adı ve şifreyi değiştir', onPress: () => router.push('/settings-account') },
+    { id: 'rates', icon: 'swap-horizontal', iconColor: '#0090FF', title: 'Döviz Kurları', subtitle: 'Otomatik veya manuel kur ayarla', onPress: () => router.push('/settings-rates') },
     { id: 'categories', icon: 'pricetags', iconColor: theme.colors.success, title: 'Kategoriler', subtitle: 'Kategorileri düzenle, ekle, sil', onPress: () => router.push('/settings-categories') },
     { id: 'reseed', icon: 'sparkles', iconColor: theme.colors.warning, title: 'Demo Verilerini Yenile', subtitle: 'Mevcut verileri demo örneklerle değiştir', onPress: async () => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); await api.seed(true); router.back(); } },
     { id: 'reset', icon: 'trash', iconColor: theme.colors.danger, title: 'Fabrika Ayarlarına Dön', subtitle: 'Tüm verileri kalıcı olarak sil', onPress: () => setConfirmReset(true), danger: true },

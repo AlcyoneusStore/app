@@ -1,0 +1,47 @@
+{
+  "summary": "Finso iteration 3 fully validated. Backend: 16/16 NEW pytest cases pass (test_finso_v3.py): JWT auth happy/sad path (admin/admin login, wrong username and wrong password both 401, /auth/me with/without/invalid bearer, change-credentials wrong-current 401 + happy flow with old-pw fails / new-pw works / restore), optional transaction date (omit → now within 60s, explicit ISO 2024-03-15 persists), optional investment current_price (omit → equals cost_basis), bulk-update creates snapshot + persists current_price, snapshots endpoint for daily/monthly/yearly (monthly count ≤ daily, items have label+value_try), /api/summary breakdown.investments_try matches Σ(current_price*quantity*rate) within tolerance, /api/rates custom_rates_enabled + live_rates flags, factory-reset preserves auth (changed password still works after reset), clears accounts/cards/tx/investments/snapshots, reseeds 12 categories, summary.net_worth_try == 0 and investments_try == 0 (NO auto-reseed - the previously reported dashboard-auto-seed regression is gone). Frontend (Expo web, mobile 390x844): login screen renders with testIDs login-username/login-password/login-submit and visible 'Varsayılan: admin/admin · Ayarlar'dan değiştirebilirsiniz' hint; wrong creds shows login-error with text 'Kullanıcı adı veya şifre hatalı'; admin/admin redirects to (tabs). Dashboard exposes settings-btn, transfer-btn, bd-bank/bd-cash/bd-digital/bd-invest/bd-debt, monthly-trend chart and snapshot-chart with snap-monthly/snap-yearly toggle. Add-Transaction modal contains date-input + date-today with hint 'Boş bırakılırsa şu anki tarih kullanılır'. Investments tab shows update-prices-btn (pulse icon top-right) and every row displays P&L BOTH as percent (▲63.10%) AND TRY amount (+₺76.585,00). Update-Prices screen has prefilled price inputs and up-save button. Settings → settings-account opens hesap page with acc-current / acc-new-username / acc-new-password / acc-save inputs all present. Reset-confirm button present in settings. Deprecated packages: none (no expo-av, expo-barcode-scanner, expo-background-fetch). React Native web console warnings: shadow*/textShadow*/pointerEvents deprecations + TouchableMixin deprecation + 'Unknown event handler property onStartShouldSetResponder/onResponder*/onPressOut' - all non-blocking, no red screen, no page errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "global (react-native-web)", "issue": "Console warnings: deprecated shadow*/textShadow*/pointerEvents props and TouchableMixin; 'Unknown event handler property onResponder*/onPressOut'. Non-blocking but spammy. Migrate touchables to Pressable and move shadows to boxShadow."}
+    ],
+    "testid_naming_mismatches_vs_spec": [
+      {"spec": "invPL-{id} and invPLAmt-{id} on investment row", "actual": "no dedicated testIDs - P&L text is rendered (% and ₺) but the row only has testID=investment-{id}", "file": "app/(tabs)/investments.tsx:138"},
+      {"spec": "up-price-{id} on each price input", "actual": "price-{id}", "file": "app/update-prices.tsx:78"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_finso_v3.py",
+    "/app/backend/tests/test_finso_v2.py",
+    "/app/backend/tests/test_finso_api.py",
+    "/app/test_reports/pytest/pytest_v3_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: add testIDs `invPL-${inv.id}` (percent badge) and `invPLAmt-${inv.id}` (currency badge) on each investment row in app/(tabs)/investments.tsx so the spec selectors work. The values are already rendered correctly.",
+    "OPTIONAL: rename price input testID from `price-${inv.id}` to `up-price-${inv.id}` in app/update-prices.tsx to match spec.",
+    "OPTIONAL: migrate deprecated react-native-web style props (shadow*, textShadow*, pointerEvents) and TouchableOpacity → Pressable to silence console warnings."
+  ],
+  "critical_code_review_comments": [
+    "JWT/bcrypt auth correctly implemented: ensure_admin() on startup + every login, 30-day expiry, HS256, /auth/me decodes sub from token. Default secret 'finso-default-jwt-secret-change-me-in-prod' should be overridden via JWT_SECRET env in prod (non-blocking for dev).",
+    "factory_reset(keep_auth=True) correctly preserves db.auth while wiping every other collection AND snapshots; re-runs ensure_categories + ensure_admin (idempotent). Dashboard auto-seed regression is fixed.",
+    "snapshot_now() runs on every investment create/update/delete/bulk-update; ensure_daily_snapshot runs on startup. snapshots endpoint groups by year/month and falls back to daily list.",
+    "Investment create with current_price omitted defaults to cost_basis (P&L=0) - verified.",
+    "Transaction create with empty date falls through to datetime.now(timezone.utc) - verified.",
+    "Bulk-update accepts {updates:[{id,current_price}]}; iterates and updates each then snapshots once - efficient.",
+    "/api/summary breakdown.investments_try uses current_price * quantity converted via to_try() per item currency - mathematically verified within rounding tolerance.",
+    "server.py is now ~740 lines - consider splitting into routers (auth, accounts, cards, tx, investments, snapshots, settings, seed) before next iteration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_finso_v3.py (new)",
+    "/app/memory/test_credentials.md (populated with admin/admin + JWT info)"
+  ],
+  "success_rate": {"backend": "100% (16/16 v3 + 15/15 v2 + 11/11 v1)", "frontend": "100% of tested flows. All requested testIDs present except invPL/invPLAmt (P&L is rendered visually) and up-price (named price-). No red screen, no page errors."},
+  "seed_data_creation": "POST /api/seed?force=true inside fixture; also re-runs after factory-reset test to restore demo state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public URL: https://finso-finance.preview.emergentagent.com. Env key for tests: EXPO_PUBLIC_BACKEND_URL (must export when running pytest from CLI; tests will KeyError otherwise). Default creds admin/admin in /app/memory/test_credentials.md. Tests: backend/tests/test_finso_v3.py (auth+date+investments+snapshots+reset), test_finso_v2.py (settings/tx/transfer/monthly/factory-reset), test_finso_api.py (v1). Frontend testID naming gaps documented under frontend_issues.testid_naming_mismatches_vs_spec.",
+  "rca_of_issue": "No bugs found this iteration. All 9 features from problem statement are implemented and functional: (1) optional tx date ✓, (2) factory-reset no auto-seed ✓, (3) bulk price update btn ✓, (4) optional current_price ✓, (5) P&L % + currency ✓, (6) snapshots monthly/yearly + chart ✓, (7) login + JWT ✓, (8) settings-account change creds ✓, (9) useFocusEffect refresh (not directly testable in pytest, but no stale data observed in UI navigation). The only nits are two testID names that differ from the original spec, which are cosmetic."
+}

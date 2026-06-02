@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { PieChart, LineChart } from 'react-native-gifted-charts';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import ScreenContainer from '@/src/components/ScreenContainer';
 import GlassCard from '@/src/components/GlassCard';
@@ -15,25 +15,27 @@ export default function DashboardScreen() {
   const { currency, fromTry, refresh: refreshRates } = useCurrency();
   const [summary, setSummary] = useState<any>(null);
   const [monthly, setMonthly] = useState<any[]>([]);
+  const [snapshots, setSnapshots] = useState<any[]>([]);
+  const [snapPeriod, setSnapPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
 
   const load = useCallback(async () => {
     try {
-      let s = await api.getSummary();
-      if (!s.net_worth_try || s.net_worth_try === 0) {
-        await api.seed();
-        s = await api.getSummary();
-      }
-      setSummary(s);
-      const m = await api.getMonthlyStats(6);
-      setMonthly(m);
+      const [s, m, sn] = await Promise.all([
+        api.getSummary(),
+        api.getMonthlyStats(6),
+        api.getSnapshots(snapPeriod),
+      ]);
+      setSummary(s); setMonthly(m); setSnapshots(sn);
     } catch (e) { console.warn(e); }
     finally { setLoading(false); setRefreshing(false); }
-  }, []);
+  }, [snapPeriod]);
 
   useEffect(() => { load(); }, [load]);
+  // refresh on focus
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -127,10 +129,10 @@ export default function DashboardScreen() {
         <GlassCard style={{ marginTop: 12 }} testID="monthly-trend">
           <View style={styles.cardHead}>
             <View>
-              <Text style={styles.cardTitle}>Aylık Net Akış</Text>
-              <Text style={styles.cardSub}>Son {monthly.length} ay</Text>
+              <Text style={styles.cardTitle}>Aylık Nakit Akışı</Text>
+              <Text style={styles.cardSub}>Son {monthly.length} ay · gelir vs gider</Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
               <View style={styles.legendChip}><View style={[styles.legendDot, { backgroundColor: theme.colors.success }]} /><Text style={styles.legendChipText}>Gelir</Text></View>
               <View style={styles.legendChip}><View style={[styles.legendDot, { backgroundColor: theme.colors.danger }]} /><Text style={styles.legendChipText}>Gider</Text></View>
             </View>
@@ -145,8 +147,8 @@ export default function DashboardScreen() {
                 return (
                   <View key={i} style={{ alignItems: 'center', flex: 1, gap: 6 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 140 }}>
-                      <View style={{ width: 10, height: Math.max(2, incH), backgroundColor: theme.colors.success, borderRadius: 3, opacity: 0.9 }} />
-                      <View style={{ width: 10, height: Math.max(2, expH), backgroundColor: theme.colors.danger, borderRadius: 3, opacity: 0.9 }} />
+                      <View style={{ width: 10, height: Math.max(2, incH), backgroundColor: theme.colors.success, borderRadius: 3 }} />
+                      <View style={{ width: 10, height: Math.max(2, expH), backgroundColor: theme.colors.danger, borderRadius: 3 }} />
                     </View>
                     <Text style={styles.barLabel}>{m.label}</Text>
                   </View>
@@ -154,10 +156,56 @@ export default function DashboardScreen() {
               })}
             </View>
           </View>
+        </GlassCard>
+      )}
+
+      {/* Investment snapshots */}
+      {snapshots.length > 1 && (
+        <GlassCard style={{ marginTop: 12 }} testID="snapshot-chart">
+          <View style={styles.cardHead}>
+            <View>
+              <Text style={styles.cardTitle}>Yatırım Değişimi</Text>
+              <Text style={styles.cardSub}>{snapPeriod === 'monthly' ? 'Aylık' : 'Yıllık'} portföy değeri</Text>
+            </View>
+            <View style={{ flexDirection: 'row', backgroundColor: theme.colors.glass, borderRadius: theme.radius.pill, padding: 3, borderWidth: 1, borderColor: theme.colors.border }}>
+              {(['monthly', 'yearly'] as const).map(p => (
+                <Pressable key={p} testID={`snap-${p}`} onPress={() => { Haptics.selectionAsync(); setSnapPeriod(p); }} style={[{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill }, snapPeriod === p && { backgroundColor: theme.colors.brand }]}>
+                  <Text style={{ color: snapPeriod === p ? '#fff' : theme.colors.onSurfaceMuted, fontSize: 11, fontWeight: '700' }}>{p === 'monthly' ? 'Ay' : 'Yıl'}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+          <View style={{ marginTop: 12, alignItems: 'center' }}>
+            <LineChart
+              data={snapshots.map(s => ({ value: Math.round(fromTry(s.value_try)) }))}
+              color={theme.colors.success}
+              thickness={3}
+              startFillColor={theme.colors.success}
+              endFillColor={theme.colors.surface}
+              startOpacity={0.4}
+              endOpacity={0.05}
+              areaChart
+              hideDataPoints={false}
+              dataPointsColor={theme.colors.success}
+              dataPointsRadius={3}
+              yAxisColor="transparent"
+              xAxisColor="transparent"
+              yAxisTextStyle={{ color: theme.colors.onSurfaceMuted, fontSize: 9 }}
+              hideRules
+              backgroundColor="transparent"
+              width={290}
+              height={120}
+              spacing={Math.max(20, 290 / Math.max(snapshots.length - 1, 1))}
+              initialSpacing={10}
+              endSpacing={0}
+              noOfSections={3}
+              maxValue={Math.max(...snapshots.map(s => fromTry(s.value_try))) * 1.1}
+            />
+          </View>
           <View style={styles.netLineWrap}>
-            <Text style={styles.netLineLabel}>Net</Text>
-            <Text style={[styles.netLineValue, { color: lineData[lineData.length - 1]?.value >= 0 ? theme.colors.success : theme.colors.danger }]}>
-              {formatMoney(lineData[lineData.length - 1]?.value || 0, currency, { decimals: 0, compact: true })}
+            <Text style={styles.netLineLabel}>En Son</Text>
+            <Text style={[styles.netLineValue, { color: theme.colors.success }]}>
+              {formatMoney(fromTry(snapshots[snapshots.length - 1]?.value_try || 0), currency, { decimals: 0, compact: true })}
             </Text>
           </View>
         </GlassCard>

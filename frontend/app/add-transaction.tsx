@@ -30,6 +30,7 @@ export default function AddTransactionScreen() {
   const [sourceType, setSourceType] = useState<'account' | 'card'>(initial?.source_type || 'account');
   const [accountId, setAccountId] = useState<string>(initial?.account_id || '');
   const [cardId, setCardId] = useState<string>(initial?.card_id || '');
+  const [dateStr, setDateStr] = useState<string>(initial?.date ? new Date(initial.date).toISOString().slice(0, 10) : '');
   const [saving, setSaving] = useState(false);
 
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -70,6 +71,12 @@ export default function AddTransactionScreen() {
         category: type === 'card_payment' ? 'Kart Ödemesi' : category,
         note,
       };
+      // optional date
+      if (dateStr) {
+        // accept YYYY-MM-DD; build ISO
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) payload.date = d.toISOString();
+      }
       if (type === 'expense') {
         payload.source_type = sourceType;
         if (sourceType === 'account') payload.account_id = accountId;
@@ -84,7 +91,9 @@ export default function AddTransactionScreen() {
       }
 
       if (isEdit) {
-        await api.updateTransaction(params.id as string, { amount: n, currency, category: payload.category, note });
+        const upd: any = { amount: n, currency, category: payload.category, note };
+        if (dateStr) { const d = new Date(dateStr); if (!isNaN(d.getTime())) upd.date = d.toISOString(); }
+        await api.updateTransaction(params.id as string, upd);
       } else {
         await api.createTransaction(payload);
       }
@@ -223,6 +232,23 @@ export default function AddTransactionScreen() {
 
             <Text style={styles.fieldLabel}>Not (opsiyonel)</Text>
             <TextInput testID="note-input" placeholder="örn. Migros haftalık alışveriş" placeholderTextColor={theme.colors.onSurfaceDim} value={note} onChangeText={setNote} style={styles.noteInput} />
+
+            <Text style={styles.fieldLabel}>Tarih (opsiyonel · YYYY-AA-GG)</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput
+                testID="date-input"
+                placeholder={new Date().toISOString().slice(0, 10)}
+                placeholderTextColor={theme.colors.onSurfaceDim}
+                value={dateStr}
+                onChangeText={setDateStr}
+                style={[styles.noteInput, { flex: 1 }]}
+                autoCapitalize="none"
+              />
+              <Pressable testID="date-today" onPress={() => setDateStr(new Date().toISOString().slice(0, 10))} style={{ paddingHorizontal: 16, justifyContent: 'center', backgroundColor: theme.colors.glass, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.border }}>
+                <Text style={{ color: theme.colors.brand, fontWeight: '700' }}>Bugün</Text>
+              </Pressable>
+            </View>
+            <Text style={{ color: theme.colors.onSurfaceDim, fontSize: 11, marginTop: 6 }}>Boş bırakılırsa şu anki tarih kullanılır</Text>
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 24 }}>
               {isEdit && (

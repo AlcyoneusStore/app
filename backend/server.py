@@ -1,10 +1,13 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import httpx
+import bcrypt
+import jwt
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
@@ -19,15 +22,68 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+JWT_SECRET = os.environ.get('JWT_SECRET', 'finso-default-jwt-secret-change-me-in-prod')
+JWT_ALG = 'HS256'
+JWT_EXPIRE_HOURS = 24 * 30  # 30 days
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
+bearer = HTTPBearer(auto_error=False)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 CurrencyCode = Literal["TRY", "USD", "RUB"]
+ADMIN_DOC_ID = "auth_credentials"
+
+# ---------- Auth helpers ----------
+def hash_pw(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_pw(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode('utf-8'), hashed.encode('utf-8'))
+    except Exception:
+        return False
+
+def create_token(subject: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {"sub": subject, "iat": int(now.timestamp()), "exp": int((now + timedelta(hours=JWT_EXPIRE_HOURS)).timestamp())}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+async def ensure_admin():
+    doc = await db.auth.find_one({"_id": ADMIN_DOC_ID})
+    if not doc:
+        await db.auth.insert_one({"_id": ADMIN_DOC_ID, "username": "admin", "password_hash": hash_pw("admin")})
+
+async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
+    if not creds or creds.scheme.lower() != "bearer":
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALG])
+    except Exception:
+        raise HTTPException(401, "Invalid or expired token")
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(401, "Invalid token")
+    return sub
+
 
 # ---------- Models ----------
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+class ChangeCredsRequest(BaseModel):
+    current_password: str
+    new_username: Optional[str] = None
+    new_password: Optional[str] = None
+
+
 class Account(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -40,149 +96,94 @@ class Account(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class AccountCreate(BaseModel):
-    name: str
-    type: str
-    currency: CurrencyCode
-    balance: float
-    icon: Optional[str] = "wallet"
-    color: Optional[str] = "#0066FF"
+    name: str; type: str; currency: CurrencyCode; balance: float
+    icon: Optional[str] = "wallet"; color: Optional[str] = "#0066FF"
 
 class AccountUpdate(BaseModel):
-    name: Optional[str] = None
-    type: Optional[str] = None
-    currency: Optional[CurrencyCode] = None
-    balance: Optional[float] = None
-    icon: Optional[str] = None
-    color: Optional[str] = None
+    name: Optional[str] = None; type: Optional[str] = None; currency: Optional[CurrencyCode] = None
+    balance: Optional[float] = None; icon: Optional[str] = None; color: Optional[str] = None
+
 
 class Card(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    bank: str
-    last4: str
-    currency: CurrencyCode
-    card_type: str
-    limit: float
-    debt: float
-    statement_day: int
-    due_day: int
-    gradient: str = "blue"
+    name: str; bank: str; last4: str; currency: CurrencyCode
+    card_type: str; limit: float; debt: float
+    statement_day: int; due_day: int; gradient: str = "blue"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class CardCreate(BaseModel):
-    name: str
-    bank: str
-    last4: str
-    currency: CurrencyCode
-    card_type: str
-    limit: float
-    debt: float
-    statement_day: int
-    due_day: int
-    gradient: Optional[str] = "blue"
+    name: str; bank: str; last4: str; currency: CurrencyCode; card_type: str
+    limit: float; debt: float; statement_day: int; due_day: int; gradient: Optional[str] = "blue"
 
 class CardUpdate(BaseModel):
-    name: Optional[str] = None
-    bank: Optional[str] = None
-    last4: Optional[str] = None
-    currency: Optional[CurrencyCode] = None
-    card_type: Optional[str] = None
-    limit: Optional[float] = None
-    debt: Optional[float] = None
-    statement_day: Optional[int] = None
-    due_day: Optional[int] = None
-    gradient: Optional[str] = None
+    name: Optional[str] = None; bank: Optional[str] = None; last4: Optional[str] = None
+    currency: Optional[CurrencyCode] = None; card_type: Optional[str] = None
+    limit: Optional[float] = None; debt: Optional[float] = None
+    statement_day: Optional[int] = None; due_day: Optional[int] = None; gradient: Optional[str] = None
+
 
 class Transaction(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: str  # expense | income | transfer | card_payment
-    amount: float
-    currency: CurrencyCode
-    amount_try: float = 0.0
-    category: str
-    note: Optional[str] = ""
-    source_type: Optional[str] = None  # 'account' | 'card'
-    account_id: Optional[str] = None
-    card_id: Optional[str] = None
-    # for transfers
-    to_account_id: Optional[str] = None
-    to_amount: Optional[float] = None
+    amount: float; currency: CurrencyCode; amount_try: float = 0.0
+    category: str; note: Optional[str] = ""
+    source_type: Optional[str] = None
+    account_id: Optional[str] = None; card_id: Optional[str] = None
+    to_account_id: Optional[str] = None; to_amount: Optional[float] = None
     to_currency: Optional[CurrencyCode] = None
     date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class TransactionCreate(BaseModel):
-    type: str
-    amount: float
-    currency: CurrencyCode
-    category: str
-    note: Optional[str] = ""
+    type: str; amount: float; currency: CurrencyCode
+    category: str; note: Optional[str] = ""
     source_type: Optional[str] = None
-    account_id: Optional[str] = None
-    card_id: Optional[str] = None
+    account_id: Optional[str] = None; card_id: Optional[str] = None
     date: Optional[datetime] = None
 
 class TransactionUpdate(BaseModel):
-    amount: Optional[float] = None
-    currency: Optional[CurrencyCode] = None
-    category: Optional[str] = None
-    note: Optional[str] = None
+    amount: Optional[float] = None; currency: Optional[CurrencyCode] = None
+    category: Optional[str] = None; note: Optional[str] = None
     date: Optional[datetime] = None
 
 class TransferCreate(BaseModel):
-    from_account_id: str
-    to_account_id: str
-    amount: float
-    currency: CurrencyCode
-    to_amount: Optional[float] = None  # if manual conversion provided
+    from_account_id: str; to_account_id: str
+    amount: float; currency: CurrencyCode
+    to_amount: Optional[float] = None
     note: Optional[str] = ""
+
 
 class Investment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    symbol: str
-    name: str
-    asset_type: str
-    quantity: float
-    cost_basis: float
-    current_price: float
+    symbol: str; name: str; asset_type: str
+    quantity: float; cost_basis: float; current_price: float
     currency: CurrencyCode
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class InvestmentCreate(BaseModel):
-    symbol: str
-    name: str
-    asset_type: str
-    quantity: float
-    cost_basis: float
-    current_price: float
+    symbol: str; name: str; asset_type: str
+    quantity: float; cost_basis: float
+    current_price: Optional[float] = None  # defaults to cost_basis
     currency: CurrencyCode
 
 class InvestmentUpdate(BaseModel):
-    symbol: Optional[str] = None
-    name: Optional[str] = None
-    asset_type: Optional[str] = None
-    current_price: Optional[float] = None
-    quantity: Optional[float] = None
-    cost_basis: Optional[float] = None
-    currency: Optional[CurrencyCode] = None
+    symbol: Optional[str] = None; name: Optional[str] = None; asset_type: Optional[str] = None
+    current_price: Optional[float] = None; quantity: Optional[float] = None
+    cost_basis: Optional[float] = None; currency: Optional[CurrencyCode] = None
+
+class InvestmentBulkUpdate(BaseModel):
+    updates: List[dict]  # [{"id": "...", "current_price": 123.45}]
+
 
 class Category(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    icon: str = "ellipsis-horizontal"
-    color: str = "#0066FF"
-    kind: str = "expense"  # expense | income
+    name: str; icon: str = "pricetag"; color: str = "#0066FF"; kind: str = "expense"
 
 class CategoryCreate(BaseModel):
-    name: str
-    icon: Optional[str] = "ellipsis-horizontal"
-    color: Optional[str] = "#0066FF"
-    kind: Optional[str] = "expense"
+    name: str; icon: Optional[str] = "pricetag"; color: Optional[str] = "#0066FF"; kind: Optional[str] = "expense"
 
 class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    icon: Optional[str] = None
-    color: Optional[str] = None
-    kind: Optional[str] = None
+    name: Optional[str] = None; icon: Optional[str] = None; color: Optional[str] = None; kind: Optional[str] = None
+
 
 class SettingsModel(BaseModel):
     custom_rates_enabled: bool = False
@@ -195,7 +196,6 @@ class SettingsUpdate(BaseModel):
     custom_rub_try: Optional[float] = None
 
 
-# ---------- Default categories ----------
 DEFAULT_CATEGORIES = [
     {"name": "Market", "icon": "cart", "color": "#00FF94", "kind": "expense"},
     {"name": "Eğlence", "icon": "film", "color": "#FF3366", "kind": "expense"},
@@ -212,10 +212,8 @@ DEFAULT_CATEGORIES = [
 ]
 
 async def ensure_categories():
-    count = await db.categories.count_documents({})
-    if count == 0:
-        docs = [Category(**c).dict() for c in DEFAULT_CATEGORIES]
-        await db.categories.insert_many(docs)
+    if await db.categories.count_documents({}) == 0:
+        await db.categories.insert_many([Category(**c).dict() for c in DEFAULT_CATEGORIES])
 
 
 # ---------- Rates ----------
@@ -231,25 +229,21 @@ async def fetch_live_rates() -> dict:
         async with httpx.AsyncClient(timeout=8.0) as hc:
             r = await hc.get("https://api.exchangerate.host/latest", params={"base": "TRY", "symbols": "USD,RUB"})
             if r.status_code == 200:
-                j = r.json()
-                inv = j.get("rates", {})
-                if inv.get("USD"):
-                    rates["USD"] = round(1.0 / float(inv["USD"]), 6)
-                if inv.get("RUB"):
-                    rates["RUB"] = round(1.0 / float(inv["RUB"]), 6)
+                inv = r.json().get("rates", {})
+                if inv.get("USD"): rates["USD"] = round(1.0 / float(inv["USD"]), 6)
+                if inv.get("RUB"): rates["RUB"] = round(1.0 / float(inv["RUB"]), 6)
     except Exception as e:
-        logger.warning(f"Rate fetch failed, using fallback: {e}")
+        logger.warning(f"Rate fetch failed: {e}")
     _RATE_CACHE = {"data": rates, "ts": now}
     return rates
 
 async def fetch_rates() -> dict:
     live = await fetch_live_rates()
-    settings = await db.settings.find_one({"_id": "singleton"})
-    if settings and settings.get("custom_rates_enabled"):
-        out = {"TRY": 1.0,
-               "USD": float(settings.get("custom_usd_try") or live["USD"]),
-               "RUB": float(settings.get("custom_rub_try") or live["RUB"])}
-        return out
+    s = await db.settings.find_one({"_id": "singleton"})
+    if s and s.get("custom_rates_enabled"):
+        return {"TRY": 1.0,
+                "USD": float(s.get("custom_usd_try") or live["USD"]),
+                "RUB": float(s.get("custom_rub_try") or live["RUB"])}
     return live
 
 def to_try(amount: float, currency: str, rates: dict) -> float:
@@ -257,23 +251,46 @@ def to_try(amount: float, currency: str, rates: dict) -> float:
 
 def convert(amount_try: float, currency: str, rates: dict) -> float:
     rate = rates.get(currency, 1.0)
-    if rate == 0:
-        return 0.0
-    return round(float(amount_try) / float(rate), 2)
+    return round(float(amount_try) / float(rate), 2) if rate else 0.0
 
 
+# ---------- AUTH endpoints ----------
+@api_router.post("/auth/login", response_model=TokenResponse)
+async def login(data: LoginRequest):
+    await ensure_admin()
+    doc = await db.auth.find_one({"_id": ADMIN_DOC_ID})
+    if not doc or data.username != doc.get("username") or not verify_pw(data.password, doc.get("password_hash", "")):
+        raise HTTPException(401, "Kullanıcı adı veya şifre hatalı")
+    return TokenResponse(access_token=create_token(data.username))
+
+@api_router.post("/auth/change-credentials")
+async def change_creds(data: ChangeCredsRequest, _: str = Depends(get_current_user)):
+    if not data.new_username and not data.new_password:
+        raise HTTPException(400, "Yeni kullanıcı adı veya şifre belirtin")
+    doc = await db.auth.find_one({"_id": ADMIN_DOC_ID})
+    if not doc or not verify_pw(data.current_password, doc.get("password_hash", "")):
+        raise HTTPException(401, "Mevcut şifre hatalı")
+    upd = {}
+    if data.new_username: upd["username"] = data.new_username
+    if data.new_password: upd["password_hash"] = hash_pw(data.new_password)
+    await db.auth.update_one({"_id": ADMIN_DOC_ID}, {"$set": upd})
+    return {"ok": True, "username": data.new_username or doc["username"]}
+
+@api_router.get("/auth/me")
+async def me(user: str = Depends(get_current_user)):
+    doc = await db.auth.find_one({"_id": ADMIN_DOC_ID})
+    return {"username": doc["username"] if doc else user}
+
+
+# ---------- Rates endpoint ----------
 @api_router.get("/rates")
 async def get_rates():
     live = await fetch_live_rates()
     effective = await fetch_rates()
-    settings = await db.settings.find_one({"_id": "singleton"}) or {}
-    return {
-        "base": "TRY",
-        "rates": effective,
-        "live_rates": live,
-        "custom_rates_enabled": bool(settings.get("custom_rates_enabled")),
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }
+    s = await db.settings.find_one({"_id": "singleton"}) or {}
+    return {"base": "TRY", "rates": effective, "live_rates": live,
+            "custom_rates_enabled": bool(s.get("custom_rates_enabled")),
+            "updated_at": datetime.now(timezone.utc).isoformat()}
 
 
 # ---------- Settings ----------
@@ -298,25 +315,20 @@ async def list_categories():
 
 @api_router.post("/categories")
 async def create_category(payload: CategoryCreate):
-    cat = Category(**payload.dict())
-    await db.categories.insert_one(cat.dict())
-    return cat.dict()
+    cat = Category(**payload.dict()); await db.categories.insert_one(cat.dict()); return cat.dict()
 
 @api_router.patch("/categories/{cat_id}")
 async def update_category(cat_id: str, payload: CategoryUpdate):
     upd = {k: v for k, v in payload.dict().items() if v is not None}
-    if not upd:
-        return {"ok": True}
+    if not upd: return {"ok": True}
     res = await db.categories.update_one({"id": cat_id}, {"$set": upd})
-    if res.matched_count == 0:
-        raise HTTPException(404, "Category not found")
+    if res.matched_count == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
 @api_router.delete("/categories/{cat_id}")
 async def delete_category(cat_id: str):
     res = await db.categories.delete_one({"id": cat_id})
-    if res.deleted_count == 0:
-        raise HTTPException(404, "Category not found")
+    if res.deleted_count == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
 
@@ -325,39 +337,31 @@ async def delete_category(cat_id: str):
 async def list_accounts():
     rates = await fetch_rates()
     items = await db.accounts.find({}, {"_id": 0}).to_list(1000)
-    for it in items:
-        it["balance_try"] = to_try(it["balance"], it["currency"], rates)
+    for it in items: it["balance_try"] = to_try(it["balance"], it["currency"], rates)
     return items
 
 @api_router.post("/accounts")
 async def create_account(payload: AccountCreate):
     rates = await fetch_rates()
-    acc = Account(**payload.dict())
-    acc.balance_try = to_try(acc.balance, acc.currency, rates)
-    await db.accounts.insert_one(acc.dict())
-    return acc.dict()
+    acc = Account(**payload.dict()); acc.balance_try = to_try(acc.balance, acc.currency, rates)
+    await db.accounts.insert_one(acc.dict()); return acc.dict()
 
-@api_router.patch("/accounts/{account_id}")
-async def update_account(account_id: str, payload: AccountUpdate):
+@api_router.patch("/accounts/{aid}")
+async def update_account(aid: str, payload: AccountUpdate):
     upd = {k: v for k, v in payload.dict().items() if v is not None}
-    if not upd:
-        return {"ok": True}
-    res = await db.accounts.update_one({"id": account_id}, {"$set": upd})
-    if res.matched_count == 0:
-        raise HTTPException(404, "Account not found")
-    # recompute balance_try
+    if not upd: return {"ok": True}
+    res = await db.accounts.update_one({"id": aid}, {"$set": upd})
+    if res.matched_count == 0: raise HTTPException(404, "Not found")
     rates = await fetch_rates()
-    acc = await db.accounts.find_one({"id": account_id}, {"_id": 0})
+    acc = await db.accounts.find_one({"id": aid}, {"_id": 0})
     if acc:
-        new_try = to_try(acc["balance"], acc["currency"], rates)
-        await db.accounts.update_one({"id": account_id}, {"$set": {"balance_try": new_try}})
+        await db.accounts.update_one({"id": aid}, {"$set": {"balance_try": to_try(acc["balance"], acc["currency"], rates)}})
     return {"ok": True}
 
-@api_router.delete("/accounts/{account_id}")
-async def delete_account(account_id: str):
-    res = await db.accounts.delete_one({"id": account_id})
-    if res.deleted_count == 0:
-        raise HTTPException(404, "Account not found")
+@api_router.delete("/accounts/{aid}")
+async def delete_account(aid: str):
+    res = await db.accounts.delete_one({"id": aid})
+    if res.deleted_count == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
 
@@ -368,180 +372,114 @@ async def list_cards():
 
 @api_router.post("/cards")
 async def create_card(payload: CardCreate):
-    card = Card(**payload.dict())
-    await db.cards.insert_one(card.dict())
-    return card.dict()
+    c = Card(**payload.dict()); await db.cards.insert_one(c.dict()); return c.dict()
 
-@api_router.patch("/cards/{card_id}")
-async def update_card(card_id: str, payload: CardUpdate):
+@api_router.patch("/cards/{cid}")
+async def update_card(cid: str, payload: CardUpdate):
     upd = {k: v for k, v in payload.dict().items() if v is not None}
-    if not upd:
-        return {"ok": True}
-    res = await db.cards.update_one({"id": card_id}, {"$set": upd})
-    if res.matched_count == 0:
-        raise HTTPException(404, "Card not found")
+    if not upd: return {"ok": True}
+    res = await db.cards.update_one({"id": cid}, {"$set": upd})
+    if res.matched_count == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
-@api_router.delete("/cards/{card_id}")
-async def delete_card(card_id: str):
-    res = await db.cards.delete_one({"id": card_id})
-    if res.deleted_count == 0:
-        raise HTTPException(404, "Card not found")
+@api_router.delete("/cards/{cid}")
+async def delete_card(cid: str):
+    res = await db.cards.delete_one({"id": cid})
+    if res.deleted_count == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
 
 # ---------- Transactions ----------
-async def _apply_account_delta(account_id: str, amount: float, amount_currency: str, rates: dict, sign: int):
-    acc = await db.accounts.find_one({"id": account_id}, {"_id": 0})
-    if not acc:
-        return
-    if amount_currency != acc["currency"]:
-        delta_try = to_try(amount, amount_currency, rates)
-        delta_acc = convert(delta_try, acc["currency"], rates)
-    else:
-        delta_acc = amount
-    new_balance = round(float(acc["balance"]) + sign * float(delta_acc), 2)
-    await db.accounts.update_one(
-        {"id": account_id},
-        {"$set": {"balance": new_balance, "balance_try": to_try(new_balance, acc["currency"], rates)}}
-    )
+async def _delta_account(aid: str, amount: float, currency: str, rates: dict, sign: int):
+    acc = await db.accounts.find_one({"id": aid}, {"_id": 0})
+    if not acc: return
+    delta = amount if currency == acc["currency"] else convert(to_try(amount, currency, rates), acc["currency"], rates)
+    new_balance = round(float(acc["balance"]) + sign * float(delta), 2)
+    await db.accounts.update_one({"id": aid}, {"$set": {"balance": new_balance, "balance_try": to_try(new_balance, acc["currency"], rates)}})
 
-async def _apply_card_delta(card_id: str, amount: float, amount_currency: str, rates: dict, sign: int):
-    card = await db.cards.find_one({"id": card_id}, {"_id": 0})
-    if not card:
-        return
-    if amount_currency != card["currency"]:
-        delta_try = to_try(amount, amount_currency, rates)
-        delta_card = convert(delta_try, card["currency"], rates)
-    else:
-        delta_card = amount
-    new_debt = max(0.0, round(float(card["debt"]) + sign * float(delta_card), 2))
-    await db.cards.update_one({"id": card_id}, {"$set": {"debt": new_debt}})
+async def _delta_card(cid: str, amount: float, currency: str, rates: dict, sign: int):
+    card = await db.cards.find_one({"id": cid}, {"_id": 0})
+    if not card: return
+    delta = amount if currency == card["currency"] else convert(to_try(amount, currency, rates), card["currency"], rates)
+    new_debt = max(0.0, round(float(card["debt"]) + sign * float(delta), 2))
+    await db.cards.update_one({"id": cid}, {"$set": {"debt": new_debt}})
 
 @api_router.get("/transactions")
 async def list_transactions(type: Optional[str] = None, category: Optional[str] = None, q: Optional[str] = None, limit: int = 500):
     query = {}
-    if type:
-        query["type"] = type
-    if category:
-        query["category"] = category
-    if q:
-        query["$or"] = [
-            {"note": {"$regex": q, "$options": "i"}},
-            {"category": {"$regex": q, "$options": "i"}},
-        ]
+    if type: query["type"] = type
+    if category: query["category"] = category
+    if q: query["$or"] = [{"note": {"$regex": q, "$options": "i"}}, {"category": {"$regex": q, "$options": "i"}}]
     return await db.transactions.find(query, {"_id": 0}).sort("date", -1).to_list(limit)
 
 @api_router.post("/transactions")
 async def create_transaction(payload: TransactionCreate):
     rates = await fetch_rates()
     data = payload.dict()
-    if not data.get("date"):
-        data["date"] = datetime.now(timezone.utc)
-    tx = Transaction(**data)
-    tx.amount_try = to_try(tx.amount, tx.currency, rates)
+    if not data.get("date"): data["date"] = datetime.now(timezone.utc)
+    tx = Transaction(**data); tx.amount_try = to_try(tx.amount, tx.currency, rates)
     await db.transactions.insert_one(tx.dict())
-
-    # apply effects
     if tx.type == "expense":
-        if tx.source_type == "card" and tx.card_id:
-            # spending on credit card -> increases debt
-            await _apply_card_delta(tx.card_id, tx.amount, tx.currency, rates, +1)
-        elif tx.account_id:
-            await _apply_account_delta(tx.account_id, tx.amount, tx.currency, rates, -1)
-    elif tx.type == "income":
-        if tx.account_id:
-            await _apply_account_delta(tx.account_id, tx.amount, tx.currency, rates, +1)
+        if tx.source_type == "card" and tx.card_id: await _delta_card(tx.card_id, tx.amount, tx.currency, rates, +1)
+        elif tx.account_id: await _delta_account(tx.account_id, tx.amount, tx.currency, rates, -1)
+    elif tx.type == "income" and tx.account_id:
+        await _delta_account(tx.account_id, tx.amount, tx.currency, rates, +1)
     elif tx.type == "card_payment":
-        # pay off card debt from an account
-        if tx.account_id:
-            await _apply_account_delta(tx.account_id, tx.amount, tx.currency, rates, -1)
-        if tx.card_id:
-            await _apply_card_delta(tx.card_id, tx.amount, tx.currency, rates, -1)
+        if tx.account_id: await _delta_account(tx.account_id, tx.amount, tx.currency, rates, -1)
+        if tx.card_id: await _delta_card(tx.card_id, tx.amount, tx.currency, rates, -1)
     return tx.dict()
 
-@api_router.patch("/transactions/{tx_id}")
-async def update_transaction(tx_id: str, payload: TransactionUpdate):
+@api_router.patch("/transactions/{tid}")
+async def update_transaction(tid: str, payload: TransactionUpdate):
     upd = {k: v for k, v in payload.dict().items() if v is not None}
-    if not upd:
-        return {"ok": True}
-    # recompute amount_try if amount or currency changed
+    if not upd: return {"ok": True}
     if "amount" in upd or "currency" in upd:
         rates = await fetch_rates()
-        tx = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
-        if not tx:
-            raise HTTPException(404, "Transaction not found")
-        new_amount = upd.get("amount", tx["amount"])
-        new_cur = upd.get("currency", tx["currency"])
-        upd["amount_try"] = to_try(new_amount, new_cur, rates)
-    res = await db.transactions.update_one({"id": tx_id}, {"$set": upd})
-    if res.matched_count == 0:
-        raise HTTPException(404, "Transaction not found")
+        tx = await db.transactions.find_one({"id": tid}, {"_id": 0})
+        if not tx: raise HTTPException(404, "Not found")
+        upd["amount_try"] = to_try(upd.get("amount", tx["amount"]), upd.get("currency", tx["currency"]), rates)
+    res = await db.transactions.update_one({"id": tid}, {"$set": upd})
+    if res.matched_count == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
-@api_router.delete("/transactions/{tx_id}")
-async def delete_transaction(tx_id: str):
-    tx = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
-    if not tx:
-        raise HTTPException(404, "Transaction not found")
+@api_router.delete("/transactions/{tid}")
+async def delete_transaction(tid: str):
+    tx = await db.transactions.find_one({"id": tid}, {"_id": 0})
+    if not tx: raise HTTPException(404, "Not found")
     rates = await fetch_rates()
-    # revert effects
     if tx["type"] == "expense":
-        if tx.get("source_type") == "card" and tx.get("card_id"):
-            await _apply_card_delta(tx["card_id"], tx["amount"], tx["currency"], rates, -1)
-        elif tx.get("account_id"):
-            await _apply_account_delta(tx["account_id"], tx["amount"], tx["currency"], rates, +1)
-    elif tx["type"] == "income":
-        if tx.get("account_id"):
-            await _apply_account_delta(tx["account_id"], tx["amount"], tx["currency"], rates, -1)
+        if tx.get("source_type") == "card" and tx.get("card_id"): await _delta_card(tx["card_id"], tx["amount"], tx["currency"], rates, -1)
+        elif tx.get("account_id"): await _delta_account(tx["account_id"], tx["amount"], tx["currency"], rates, +1)
+    elif tx["type"] == "income" and tx.get("account_id"):
+        await _delta_account(tx["account_id"], tx["amount"], tx["currency"], rates, -1)
     elif tx["type"] == "card_payment":
-        if tx.get("account_id"):
-            await _apply_account_delta(tx["account_id"], tx["amount"], tx["currency"], rates, +1)
-        if tx.get("card_id"):
-            await _apply_card_delta(tx["card_id"], tx["amount"], tx["currency"], rates, +1)
+        if tx.get("account_id"): await _delta_account(tx["account_id"], tx["amount"], tx["currency"], rates, +1)
+        if tx.get("card_id"): await _delta_card(tx["card_id"], tx["amount"], tx["currency"], rates, +1)
     elif tx["type"] == "transfer":
-        if tx.get("account_id"):
-            await _apply_account_delta(tx["account_id"], tx["amount"], tx["currency"], rates, +1)
-        if tx.get("to_account_id") and tx.get("to_amount") is not None and tx.get("to_currency"):
-            await _apply_account_delta(tx["to_account_id"], tx["to_amount"], tx["to_currency"], rates, -1)
-    await db.transactions.delete_one({"id": tx_id})
+        if tx.get("account_id"): await _delta_account(tx["account_id"], tx["amount"], tx["currency"], rates, +1)
+        if tx.get("to_account_id") and tx.get("to_amount") and tx.get("to_currency"):
+            await _delta_account(tx["to_account_id"], tx["to_amount"], tx["to_currency"], rates, -1)
+    await db.transactions.delete_one({"id": tid})
     return {"ok": True}
 
 
-# ---------- Transfer ----------
+# ---------- Transfers ----------
 @api_router.post("/transfers")
 async def create_transfer(payload: TransferCreate):
     rates = await fetch_rates()
-    from_acc = await db.accounts.find_one({"id": payload.from_account_id}, {"_id": 0})
-    to_acc = await db.accounts.find_one({"id": payload.to_account_id}, {"_id": 0})
-    if not from_acc or not to_acc:
-        raise HTTPException(404, "Account not found")
-    if payload.from_account_id == payload.to_account_id:
-        raise HTTPException(400, "Cannot transfer to same account")
-
+    fa = await db.accounts.find_one({"id": payload.from_account_id}, {"_id": 0})
+    ta = await db.accounts.find_one({"id": payload.to_account_id}, {"_id": 0})
+    if not fa or not ta: raise HTTPException(404, "Account not found")
+    if payload.from_account_id == payload.to_account_id: raise HTTPException(400, "Same account")
     amount_try = to_try(payload.amount, payload.currency, rates)
-    to_currency = to_acc["currency"]
-    if payload.to_amount is not None and payload.to_amount > 0:
-        to_amount = round(float(payload.to_amount), 2)
-    else:
-        to_amount = convert(amount_try, to_currency, rates)
-
-    tx = Transaction(
-        type="transfer",
-        amount=payload.amount,
-        currency=payload.currency,
-        amount_try=amount_try,
-        category="Transfer",
-        note=payload.note or f"{from_acc['name']} → {to_acc['name']}",
-        source_type="account",
-        account_id=payload.from_account_id,
-        to_account_id=payload.to_account_id,
-        to_amount=to_amount,
-        to_currency=to_currency,
-    )
+    to_amount = round(float(payload.to_amount), 2) if payload.to_amount and payload.to_amount > 0 else convert(amount_try, ta["currency"], rates)
+    tx = Transaction(type="transfer", amount=payload.amount, currency=payload.currency, amount_try=amount_try,
+                     category="Transfer", note=payload.note or f"{fa['name']} → {ta['name']}",
+                     source_type="account", account_id=payload.from_account_id,
+                     to_account_id=payload.to_account_id, to_amount=to_amount, to_currency=ta["currency"])
     await db.transactions.insert_one(tx.dict())
-    await _apply_account_delta(payload.from_account_id, payload.amount, payload.currency, rates, -1)
-    await _apply_account_delta(payload.to_account_id, to_amount, to_currency, rates, +1)
+    await _delta_account(payload.from_account_id, payload.amount, payload.currency, rates, -1)
+    await _delta_account(payload.to_account_id, to_amount, ta["currency"], rates, +1)
     return tx.dict()
 
 
@@ -552,29 +490,80 @@ async def list_investments():
 
 @api_router.post("/investments")
 async def create_investment(payload: InvestmentCreate):
-    inv = Investment(**payload.dict())
-    await db.investments.insert_one(inv.dict())
+    data = payload.dict()
+    if not data.get("current_price"): data["current_price"] = data["cost_basis"]
+    inv = Investment(**data); await db.investments.insert_one(inv.dict())
+    await snapshot_now()
     return inv.dict()
 
-@api_router.patch("/investments/{inv_id}")
-async def update_investment(inv_id: str, payload: InvestmentUpdate):
+@api_router.patch("/investments/{iid}")
+async def update_investment(iid: str, payload: InvestmentUpdate):
     upd = {k: v for k, v in payload.dict().items() if v is not None}
-    if not upd:
-        return {"ok": True}
-    res = await db.investments.update_one({"id": inv_id}, {"$set": upd})
-    if res.matched_count == 0:
-        raise HTTPException(404, "Investment not found")
+    if not upd: return {"ok": True}
+    res = await db.investments.update_one({"id": iid}, {"$set": upd})
+    if res.matched_count == 0: raise HTTPException(404, "Not found")
+    await snapshot_now()
     return {"ok": True}
 
-@api_router.delete("/investments/{inv_id}")
-async def delete_investment(inv_id: str):
-    res = await db.investments.delete_one({"id": inv_id})
-    if res.deleted_count == 0:
-        raise HTTPException(404, "Investment not found")
+@api_router.post("/investments/bulk-update")
+async def bulk_update_investments(payload: InvestmentBulkUpdate):
+    for u in payload.updates:
+        iid = u.get("id")
+        cp = u.get("current_price")
+        if iid and cp is not None:
+            await db.investments.update_one({"id": iid}, {"$set": {"current_price": float(cp)}})
+    await snapshot_now()
+    return {"ok": True, "count": len(payload.updates)}
+
+@api_router.delete("/investments/{iid}")
+async def delete_investment(iid: str):
+    res = await db.investments.delete_one({"id": iid})
+    if res.deleted_count == 0: raise HTTPException(404, "Not found")
+    await snapshot_now()
     return {"ok": True}
 
 
-# ---------- Summary / Monthly stats ----------
+# ---------- Investment snapshots ----------
+async def snapshot_now():
+    """Create a snapshot of current portfolio value."""
+    rates = await fetch_rates()
+    items = await db.investments.find({}, {"_id": 0}).to_list(1000)
+    total_value = sum(to_try(i["current_price"] * i["quantity"], i["currency"], rates) for i in items)
+    total_cost = sum(to_try(i["cost_basis"] * i["quantity"], i["currency"], rates) for i in items)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": datetime.now(timezone.utc),
+        "total_value_try": round(total_value, 2),
+        "total_cost_try": round(total_cost, 2),
+        "pl_try": round(total_value - total_cost, 2),
+        "items_count": len(items),
+    }
+    await db.snapshots.insert_one(doc)
+
+async def ensure_daily_snapshot():
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    existing = await db.snapshots.find_one({"date": {"$gte": today}})
+    if not existing:
+        await snapshot_now()
+
+@api_router.get("/investments/snapshots")
+async def list_snapshots(period: str = "monthly"):
+    """period: daily | monthly | yearly"""
+    docs = await db.snapshots.find({}, {"_id": 0}).sort("date", 1).to_list(2000)
+    if not docs: return []
+    if period == "daily":
+        return [{"date": d["date"].isoformat() if isinstance(d["date"], datetime) else str(d["date"]),
+                 "value_try": d["total_value_try"], "cost_try": d["total_cost_try"], "pl_try": d["pl_try"]} for d in docs]
+    # group by month or year - take last value in each group
+    grouped: dict = {}
+    for d in docs:
+        dt = d["date"] if isinstance(d["date"], datetime) else datetime.fromisoformat(str(d["date"]).replace("Z", "+00:00"))
+        key = f"{dt.year:04d}-{dt.month:02d}" if period == "monthly" else f"{dt.year:04d}"
+        grouped[key] = {"label": key, "value_try": d["total_value_try"], "cost_try": d["total_cost_try"], "pl_try": d["pl_try"]}
+    return [v for _, v in sorted(grouped.items())]
+
+
+# ---------- Summary / Monthly ----------
 @api_router.get("/summary")
 async def summary():
     rates = await fetch_rates()
@@ -585,12 +574,9 @@ async def summary():
     cash_try = bank_try = digital_try = 0.0
     for a in accounts:
         v = to_try(a["balance"], a["currency"], rates)
-        if a["type"] == "cash":
-            cash_try += v
-        elif a["type"] == "digital":
-            digital_try += v
-        else:
-            bank_try += v
+        if a["type"] == "cash": cash_try += v
+        elif a["type"] == "digital": digital_try += v
+        else: bank_try += v
 
     debt_try = sum(to_try(c["debt"], c["currency"], rates) for c in cards)
     invest_try = sum(to_try(i["current_price"] * i["quantity"], i["currency"], rates) for i in investments)
@@ -600,75 +586,65 @@ async def summary():
     net_worth_try = round(accounts_total_try + invest_try - debt_try, 2)
 
     return {
-        "rates": rates,
-        "net_worth_try": net_worth_try,
+        "rates": rates, "net_worth_try": net_worth_try,
         "breakdown": {
-            "cash_try": round(cash_try, 2),
-            "bank_try": round(bank_try, 2),
-            "digital_try": round(digital_try, 2),
-            "accounts_total_try": round(accounts_total_try, 2),
-            "investments_try": round(invest_try, 2),
-            "card_debt_try": round(debt_try, 2),
+            "cash_try": round(cash_try, 2), "bank_try": round(bank_try, 2),
+            "digital_try": round(digital_try, 2), "accounts_total_try": round(accounts_total_try, 2),
+            "investments_try": round(invest_try, 2), "card_debt_try": round(debt_try, 2),
+            "investments_cost_try": round(invest_cost_try, 2),
         },
         "investments_pl_try": round(invest_try - invest_cost_try, 2),
         "investments_pl_pct": round(((invest_try - invest_cost_try) / invest_cost_try * 100) if invest_cost_try > 0 else 0, 2),
+        "counts": {"accounts": len(accounts), "cards": len(cards), "investments": len(investments)},
     }
 
 @api_router.get("/monthly-stats")
 async def monthly_stats(months: int = 6):
-    """Returns income, expense, net per month for the last N months."""
     now = datetime.now(timezone.utc)
     buckets = []
     for i in range(months - 1, -1, -1):
-        y = now.year
-        m = now.month - i
-        while m <= 0:
-            m += 12
-            y -= 1
+        y = now.year; m = now.month - i
+        while m <= 0: m += 12; y -= 1
         buckets.append({"year": y, "month": m, "label": f"{m:02d}/{str(y)[-2:]}", "income": 0.0, "expense": 0.0, "net": 0.0})
-
     txs = await db.transactions.find({"type": {"$in": ["income", "expense"]}}, {"_id": 0}).to_list(5000)
     for t in txs:
         d = t["date"] if isinstance(t["date"], datetime) else datetime.fromisoformat(str(t["date"]).replace("Z", "+00:00"))
         for b in buckets:
             if d.year == b["year"] and d.month == b["month"]:
-                if t["type"] == "income":
-                    b["income"] += t.get("amount_try", 0.0)
-                else:
-                    b["expense"] += t.get("amount_try", 0.0)
+                if t["type"] == "income": b["income"] += t.get("amount_try", 0.0)
+                else: b["expense"] += t.get("amount_try", 0.0)
                 break
     for b in buckets:
-        b["net"] = round(b["income"] - b["expense"], 2)
-        b["income"] = round(b["income"], 2)
-        b["expense"] = round(b["expense"], 2)
+        b["net"] = round(b["income"] - b["expense"], 2); b["income"] = round(b["income"], 2); b["expense"] = round(b["expense"], 2)
     return buckets
 
 
-# ---------- Factory reset / Seed ----------
+# ---------- Factory / Seed ----------
 @api_router.post("/factory-reset")
-async def factory_reset():
+async def factory_reset(keep_auth: bool = True):
     await db.accounts.delete_many({})
     await db.cards.delete_many({})
     await db.transactions.delete_many({})
     await db.investments.delete_many({})
     await db.categories.delete_many({})
     await db.settings.delete_many({})
+    await db.snapshots.delete_many({})
+    if not keep_auth:
+        await db.auth.delete_many({})
     await ensure_categories()
+    await ensure_admin()
     return {"ok": True}
 
 @api_router.post("/seed")
 async def seed_demo(force: bool = False):
     await ensure_categories()
     rates = await fetch_rates()
-    existing = await db.accounts.count_documents({})
-    if existing > 0 and not force:
-        return {"ok": True, "seeded": False, "message": "Data already exists"}
-
+    if await db.accounts.count_documents({}) > 0 and not force:
+        return {"ok": True, "seeded": False, "message": "Data exists"}
     if force:
-        await db.accounts.delete_many({})
-        await db.cards.delete_many({})
-        await db.transactions.delete_many({})
-        await db.investments.delete_many({})
+        await db.accounts.delete_many({}); await db.cards.delete_many({})
+        await db.transactions.delete_many({}); await db.investments.delete_many({})
+        await db.snapshots.delete_many({})
 
     accounts = [
         Account(name="Garanti Vadesiz", type="bank", currency="TRY", balance=45230.50, icon="business", color="#00A859"),
@@ -677,8 +653,7 @@ async def seed_demo(force: bool = False):
         Account(name="Nakit Cüzdan", type="cash", currency="TRY", balance=3500.00, icon="cash", color="#0066FF"),
         Account(name="Papara", type="digital", currency="TRY", balance=8420.75, icon="phone-portrait", color="#FF3D71"),
     ]
-    for a in accounts:
-        a.balance_try = to_try(a.balance, a.currency, rates)
+    for a in accounts: a.balance_try = to_try(a.balance, a.currency, rates)
     await db.accounts.insert_many([a.dict() for a in accounts])
 
     cards = [
@@ -689,40 +664,29 @@ async def seed_demo(force: bool = False):
     await db.cards.insert_many([c.dict() for c in cards])
 
     now = datetime.now(timezone.utc)
-    acc_ids = [a.id for a in accounts]
-    card_ids = [c.id for c in cards]
+    acc_ids = [a.id for a in accounts]; card_ids = [c.id for c in cards]
     txs_raw = [
-        ("expense", 845.30, "TRY", "Market", "Migros haftalık alışveriş", 0, "account", acc_ids[0], None),
-        ("expense", 120.00, "TRY", "Eğlence", "Sinema bileti", 1, "card", None, card_ids[0]),
-        ("expense", 1450.00, "TRY", "Fatura", "Elektrik faturası", 2, "account", acc_ids[0], None),
+        ("expense", 845.30, "TRY", "Market", "Migros", 0, "account", acc_ids[0], None),
+        ("expense", 120.00, "TRY", "Eğlence", "Sinema", 1, "card", None, card_ids[0]),
+        ("expense", 1450.00, "TRY", "Fatura", "Elektrik", 2, "account", acc_ids[0], None),
         ("expense", 65.50, "USD", "Yazılım", "GitHub Pro", 5, "card", None, card_ids[0]),
         ("expense", 350.00, "TRY", "Ulaşım", "Akaryakıt", 3, "account", acc_ids[3], None),
         ("expense", 2200.00, "TRY", "Kira", "Aylık kira", 7, "account", acc_ids[0], None),
-        ("expense", 89.90, "TRY", "Market", "Bakkal", 10, "account", acc_ids[3], None),
         ("income", 35000.00, "TRY", "Maaş", "Ocak maaşı", 12, "account", acc_ids[0], None),
         ("expense", 240.00, "TRY", "Restoran", "Akşam yemeği", 4, "card", None, card_ids[1]),
-        ("expense", 1200.00, "RUB", "Eğlence", "Konser bileti", 6, "account", acc_ids[2], None),
-        ("expense", 78.50, "TRY", "Market", "Şok market", 9, "account", acc_ids[3], None),
-        ("income", 850.00, "USD", "Freelance", "Tasarım projesi", 14, "account", acc_ids[1], None),
+        ("income", 850.00, "USD", "Freelance", "Tasarım", 14, "account", acc_ids[1], None),
         ("expense", 320.00, "TRY", "Sağlık", "Eczane", 8, "account", acc_ids[0], None),
-        ("expense", 580.00, "TRY", "Fatura", "İnternet", 11, "card", None, card_ids[1]),
         ("expense", 4200.00, "TRY", "Kira", "Geçen ay kira", 35, "account", acc_ids[0], None),
         ("income", 33000.00, "TRY", "Maaş", "Geçen ay maaş", 42, "account", acc_ids[0], None),
         ("expense", 1800.00, "TRY", "Market", "Geçen ay market", 50, "account", acc_ids[0], None),
-        ("expense", 920.00, "TRY", "Fatura", "Geçen ay fatura", 60, "account", acc_ids[0], None),
         ("income", 32000.00, "TRY", "Maaş", "2 ay önce maaş", 72, "account", acc_ids[0], None),
         ("expense", 3100.00, "TRY", "Kira", "2 ay önce kira", 65, "account", acc_ids[0], None),
     ]
     tx_objs = []
-    for t in txs_raw:
-        typ, amt, cur, cat, note, days_ago, st, aid, cid = t
-        tx = Transaction(
-            type=typ, amount=amt, currency=cur, category=cat, note=note,
-            date=now - timedelta(days=days_ago),
-            source_type=st, account_id=aid, card_id=cid,
-        )
-        tx.amount_try = to_try(amt, cur, rates)
-        tx_objs.append(tx)
+    for typ, amt, cur, cat, note, days_ago, st, aid, cid in txs_raw:
+        tx = Transaction(type=typ, amount=amt, currency=cur, category=cat, note=note,
+                         date=now - timedelta(days=days_ago), source_type=st, account_id=aid, card_id=cid)
+        tx.amount_try = to_try(amt, cur, rates); tx_objs.append(tx)
     await db.transactions.insert_many([t.dict() for t in tx_objs])
 
     investments = [
@@ -735,6 +699,22 @@ async def seed_demo(force: bool = False):
     ]
     await db.investments.insert_many([i.dict() for i in investments])
 
+    # Seed historical snapshots so chart isn't empty
+    for i_days_ago in range(90, -1, -10):
+        date_pt = now - timedelta(days=i_days_ago)
+        # simulate ~ +0.3% per 10 days variation
+        factor = 1.0 - (i_days_ago / 90.0) * 0.25
+        items = await db.investments.find({}, {"_id": 0}).to_list(1000)
+        total = 0.0; total_cost = 0.0
+        for it in items:
+            total += to_try(it["current_price"] * it["quantity"] * factor, it["currency"], rates)
+            total_cost += to_try(it["cost_basis"] * it["quantity"], it["currency"], rates)
+        await db.snapshots.insert_one({
+            "id": str(uuid.uuid4()), "date": date_pt,
+            "total_value_try": round(total, 2), "total_cost_try": round(total_cost, 2),
+            "pl_try": round(total - total_cost, 2), "items_count": len(items),
+        })
+
     return {"ok": True, "seeded": True}
 
 
@@ -744,20 +724,15 @@ async def root():
 
 
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.on_event("startup")
 async def startup():
     await ensure_categories()
+    await ensure_admin()
+    await ensure_daily_snapshot()
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown():
     client.close()
