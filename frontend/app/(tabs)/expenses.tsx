@@ -32,6 +32,11 @@ export default function ExpensesScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  // refresh when screen regains focus (after edit modal closes)
+  useEffect(() => {
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -171,28 +176,34 @@ export default function ExpensesScreen() {
         ListEmptyComponent={<Text style={{ color: theme.colors.onSurfaceMuted, textAlign: 'center', paddingVertical: 24 }}>Bu dönemde işlem yok</Text>}
         renderItem={({ item }) => {
           const def = CATEGORIES.find(c => c.id === item.category);
+          const payload = encodeURIComponent(JSON.stringify(item));
           return (
-            <GlassCard testID={`tx-${item.id}`} style={{ padding: 0 }}>
-              <View style={styles.txRow}>
-                <View style={[styles.catIcon, { backgroundColor: (def?.color || '#999') + '22', width: 40, height: 40, borderRadius: 12 }]}>
-                  <Ionicons name={(def?.icon as any) || 'ellipsis-horizontal'} size={18} color={def?.color || '#999'} />
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.txCat}>{item.category}</Text>
-                  <Text style={styles.txNote} numberOfLines={1}>{item.note || new Date(item.date).toLocaleDateString('tr-TR')}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.txAmount}>
-                    -{formatMoney(item.amount, item.currency, { decimals: 2 })}
-                  </Text>
-                  {item.currency !== currency && (
-                    <Text style={styles.txSub}>
-                      ≈ {formatMoney(fromTry(item.amount_try), currency, { decimals: 2 })}
+            <Pressable testID={`tx-${item.id}`} onPress={() => router.push(`/add-transaction?id=${item.id}&payload=${payload}`)}>
+              <GlassCard style={{ padding: 0 }}>
+                <View style={styles.txRow}>
+                  <View style={[styles.catIcon, { backgroundColor: (def?.color || '#999') + '22', width: 40, height: 40, borderRadius: 12 }]}>
+                    <Ionicons name={(def?.icon as any) || 'ellipsis-horizontal'} size={18} color={def?.color || '#999'} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.txCat}>{item.category}</Text>
+                    <Text style={styles.txNote} numberOfLines={1}>
+                      {item.note || new Date(item.date).toLocaleDateString('tr-TR')}
+                      {item.source_type === 'card' ? ' · 💳' : item.source_type === 'account' ? ' · 🏦' : ''}
                     </Text>
-                  )}
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.txAmount}>
+                      -{formatMoney(item.amount, item.currency, { decimals: 2 })}
+                    </Text>
+                    {item.currency !== currency && (
+                      <Text style={styles.txSub}>
+                        ≈ {formatMoney(fromTry(item.amount_try), currency, { decimals: 2 })}
+                      </Text>
+                    )}
+                  </View>
                 </View>
-              </View>
-            </GlassCard>
+              </GlassCard>
+            </Pressable>
           );
         }}
       />

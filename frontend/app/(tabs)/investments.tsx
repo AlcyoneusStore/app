@@ -115,6 +115,7 @@ export default function InvestmentsScreen() {
 }
 
 function InvestmentRow({ inv }: { inv: any }) {
+  const router = useRouter();
   const { currency, fromTry, toTry } = useCurrency();
   const meta = TYPE_META[inv.asset_type] || TYPE_META.stock;
   const valueOrig = inv.current_price * inv.quantity;
@@ -123,27 +124,30 @@ function InvestmentRow({ inv }: { inv: any }) {
   const plPct = costOrig > 0 ? (plOrig / costOrig) * 100 : 0;
   const positive = plOrig >= 0;
   const valueTry = toTry(valueOrig, inv.currency);
+  const payload = encodeURIComponent(JSON.stringify(inv));
 
   return (
-    <GlassCard testID={`investment-${inv.id}`} style={{ padding: 0 }}>
-      <View style={styles.invRow}>
-        <View style={[styles.invIcon, { backgroundColor: meta.color + '22', borderColor: meta.color + '55' }]}>
-          <Ionicons name={meta.icon} size={20} color={meta.color} />
+    <Pressable testID={`investment-${inv.id}`} onPress={() => router.push(`/add-investment?id=${inv.id}&payload=${payload}`)}>
+      <GlassCard style={{ padding: 0 }}>
+        <View style={styles.invRow}>
+          <View style={[styles.invIcon, { backgroundColor: meta.color + '22', borderColor: meta.color + '55' }]}>
+            <Ionicons name={meta.icon} size={20} color={meta.color} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.invName}>{inv.name}</Text>
+            <Text style={styles.invMeta}>
+              {inv.quantity} {inv.symbol} · Maliyet: {formatMoney(inv.cost_basis, inv.currency, { decimals: 2 })}
+            </Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.invValue}>{formatMoney(fromTry(valueTry), currency, { decimals: 2 })}</Text>
+            <Text style={[styles.invPL, { color: positive ? theme.colors.success : theme.colors.danger }]}>
+              {positive ? '▲' : '▼'} {plPct.toFixed(2)}%
+            </Text>
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.invName}>{inv.name}</Text>
-          <Text style={styles.invMeta}>
-            {inv.quantity} {inv.symbol} · Maliyet: {formatMoney(inv.cost_basis, inv.currency, { decimals: 2 })}
-          </Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.invValue}>{formatMoney(fromTry(valueTry), currency, { decimals: 2 })}</Text>
-          <Text style={[styles.invPL, { color: positive ? theme.colors.success : theme.colors.danger }]}>
-            {positive ? '▲' : '▼'} {plPct.toFixed(2)}%
-          </Text>
-        </View>
-      </View>
-    </GlassCard>
+      </GlassCard>
+    </Pressable>
   );
 }
 

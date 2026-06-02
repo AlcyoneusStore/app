@@ -30,6 +30,12 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="add-transaction" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="add-investment" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="transfer" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="settings" options={{ presentation: 'card', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings-categories" options={{ presentation: 'card', animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings-rates" options={{ presentation: 'card', animation: 'slide_from_right' }} />
+            <Stack.Screen name="edit-account" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="edit-card" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
           </Stack>
         </CurrencyProvider>
       </SafeAreaProvider>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import ScreenContainer from '@/src/components/ScreenContainer';
 import GlassCard from '@/src/components/GlassCard';
@@ -24,35 +25,53 @@ export default function WalletScreen() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [cards, setCards] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const { currency, fromTry } = useCurrency();
+  const { currency, fromTry, toTry } = useCurrency();
+  const router = useRouter();
 
   const load = useCallback(async () => {
     try {
       const [a, c] = await Promise.all([api.listAccounts(), api.listCards()]);
       setAccounts(a);
       setCards(c);
-    } catch (e) {
-      console.warn(e);
-    } finally {
-      setRefreshing(false);
-    }
+    } catch (e) { console.warn(e); } finally { setRefreshing(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  // Reload on focus
+  useEffect(() => {
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [load]);
+
   const onRefresh = () => { setRefreshing(true); load(); };
 
   const totalAccountsTry = accounts.reduce((s, a) => s + (a.balance_try || 0), 0);
-  const totalDebtTry = cards.reduce((s, c) => s + (c.debt * (c.currency === 'TRY' ? 1 : c.currency === 'USD' ? 34 : 0.36)), 0);
+  const totalDebtTry = cards.reduce((s, c) => s + toTry(c.debt, c.currency), 0);
+
+  const openAccount = (acc: any | null) => {
+    const payload = acc ? encodeURIComponent(JSON.stringify(acc)) : '';
+    router.push(acc ? `/edit-account?id=${acc.id}&payload=${payload}` : '/edit-account');
+  };
+  const openCard = (card: any | null) => {
+    const payload = card ? encodeURIComponent(JSON.stringify(card)) : '';
+    router.push(card ? `/edit-card?id=${card.id}&payload=${payload}` : '/edit-card');
+  };
 
   return (
     <ScreenContainer testID="wallet-screen" refreshing={refreshing} onRefresh={onRefresh}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Cüzdan</Text>
+        <Pressable
+          testID="wallet-add-btn"
+          style={styles.addBtn}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); tab === 'accounts' ? openAccount(null) : openCard(null); }}
+        >
+          <Ionicons name="add" size={22} color="#fff" />
+        </Pressable>
       </View>
 
-      {/* segmented control */}
-      <View style={styles.segmentWrap} testID="wallet-segment">
+      <View style={styles.segmentWrap}>
         {(['accounts', 'cards'] as const).map(s => (
           <Pressable
             key={s}
@@ -72,11 +91,11 @@ export default function WalletScreen() {
           <GlassCard style={{ marginTop: 16 }}>
             <Text style={styles.kpiLabel}>Toplam Hesap Bakiyesi</Text>
             <Text style={styles.kpiValue}>{formatMoney(fromTry(totalAccountsTry), currency)}</Text>
-            <Text style={styles.kpiSub}>{accounts.length} hesap</Text>
+            <Text style={styles.kpiSub}>{accounts.length} hesap · Düzenlemek için dokun</Text>
           </GlassCard>
 
           <View style={{ marginTop: 16, gap: 12 }}>
-            {accounts.map((a) => <AccountRow key={a.id} account={a} displayCurrency={currency} />)}
+            {accounts.map((a) => <AccountRow key={a.id} account={a} displayCurrency={currency} onPress={() => openAccount(a)} />)}
           </View>
         </>
       ) : (
@@ -84,7 +103,7 @@ export default function WalletScreen() {
           <GlassCard style={{ marginTop: 16 }}>
             <Text style={styles.kpiLabel}>Toplam Kart Borcu</Text>
             <Text style={[styles.kpiValue, { color: theme.colors.warning }]}>{formatMoney(fromTry(totalDebtTry), currency)}</Text>
-            <Text style={styles.kpiSub}>{cards.length} kart</Text>
+            <Text style={styles.kpiSub}>{cards.length} kart · Düzenlemek için dokun</Text>
           </GlassCard>
 
           <ScrollView
@@ -94,11 +113,11 @@ export default function WalletScreen() {
             decelerationRate="fast"
             snapToInterval={CARD_W + 16}
           >
-            {cards.map(c => <HoloCard key={c.id} card={c} width={CARD_W} />)}
+            {cards.map(c => <HoloCard key={c.id} card={c} width={CARD_W} onPress={() => openCard(c)} />)}
           </ScrollView>
 
           <View style={{ marginTop: 16, gap: 12 }}>
-            {cards.map(c => <CardDetailRow key={c.id} card={c} displayCurrency={currency} />)}
+            {cards.map(c => <CardDetailRow key={c.id} card={c} onPress={() => openCard(c)} />)}
           </View>
         </>
       )}
@@ -106,43 +125,39 @@ export default function WalletScreen() {
   );
 }
 
-function AccountRow({ account, displayCurrency }: { account: any; displayCurrency: CurrencyCode }) {
+function AccountRow({ account, displayCurrency, onPress }: any) {
   const { fromTry } = useCurrency();
   const iconName = account.type === 'cash' ? 'cash' : account.type === 'digital' ? 'phone-portrait' : 'business';
   return (
-    <GlassCard testID={`account-${account.id}`} style={{ padding: 0 }}>
-      <View style={styles.accRow}>
-        <View style={[styles.accIcon, { backgroundColor: account.color + '22', borderColor: account.color + '44' }]}>
-          <Ionicons name={iconName as any} size={22} color={account.color} />
+    <Pressable testID={`account-${account.id}`} onPress={onPress}>
+      <GlassCard style={{ padding: 0 }}>
+        <View style={styles.accRow}>
+          <View style={[styles.accIcon, { backgroundColor: account.color + '22', borderColor: account.color + '44' }]}>
+            <Ionicons name={iconName as any} size={22} color={account.color} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.accName}>{account.name}</Text>
+            <Text style={styles.accType}>{account.type === 'cash' ? 'Nakit' : account.type === 'digital' ? 'Dijital' : 'Banka'}</Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.accBalance}>{formatMoney(account.balance, account.currency, { decimals: 2 })}</Text>
+            {account.currency !== displayCurrency && (
+              <Text style={styles.accSub}>≈ {formatMoney(fromTry(account.balance_try), displayCurrency, { decimals: 2 })}</Text>
+            )}
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={theme.colors.onSurfaceMuted} style={{ marginLeft: 8 }} />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.accName}>{account.name}</Text>
-          <Text style={styles.accType}>{account.type === 'cash' ? 'Nakit' : account.type === 'digital' ? 'Dijital' : 'Banka'}</Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.accBalance}>
-            {formatMoney(account.balance, account.currency, { decimals: 2 })}
-          </Text>
-          {account.currency !== displayCurrency && (
-            <Text style={styles.accSub}>
-              ≈ {formatMoney(fromTry(account.balance_try), displayCurrency, { decimals: 2 })}
-            </Text>
-          )}
-        </View>
-      </View>
-    </GlassCard>
+      </GlassCard>
+    </Pressable>
   );
 }
 
-function HoloCard({ card, width }: { card: any; width: number }) {
+function HoloCard({ card, width, onPress }: any) {
   const colors = CARD_GRADIENTS[card.gradient] || CARD_GRADIENTS.blue;
   return (
-    <View testID={`card-holo-${card.id}`} style={[styles.holoWrap, { width }]}>
+    <Pressable testID={`card-holo-${card.id}`} onPress={onPress} style={[styles.holoWrap, { width }]}>
       <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-      <LinearGradient
-        colors={['rgba(255,255,255,0.18)', 'transparent', 'rgba(0,0,0,0.4)']}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={['rgba(255,255,255,0.18)', 'transparent', 'rgba(0,0,0,0.4)']} style={StyleSheet.absoluteFill} />
       <View style={styles.holoContent}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <View>
@@ -168,44 +183,45 @@ function HoloCard({ card, width }: { card: any; width: number }) {
           </View>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
-function CardDetailRow({ card, displayCurrency }: { card: any; displayCurrency: CurrencyCode }) {
+function CardDetailRow({ card, onPress }: any) {
   const usage = card.limit > 0 ? Math.min(100, (card.debt / card.limit) * 100) : 0;
   return (
-    <GlassCard testID={`card-detail-${card.id}`}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <View>
-          <Text style={styles.accName}>{card.name}</Text>
-          <Text style={styles.accType}>{card.bank} • ****{card.last4}</Text>
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={[styles.accBalance, { color: theme.colors.warning }]}>
-            {formatMoney(card.debt, card.currency, { decimals: 2 })}
-          </Text>
-          <Text style={styles.accSub}>borç</Text>
-        </View>
-      </View>
-      {card.limit > 0 && (
-        <View style={{ marginTop: 12 }}>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${usage}%`, backgroundColor: usage > 80 ? theme.colors.danger : usage > 50 ? theme.colors.warning : theme.colors.success }]} />
+    <Pressable testID={`card-detail-${card.id}`} onPress={onPress}>
+      <GlassCard>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text style={styles.accName}>{card.name}</Text>
+            <Text style={styles.accType}>{card.bank} • ****{card.last4}</Text>
           </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-            <Text style={styles.accSub}>{usage.toFixed(0)}% kullanım</Text>
-            <Text style={styles.accSub}>Limit: {formatMoney(card.limit, card.currency, { decimals: 0 })}</Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={[styles.accBalance, { color: theme.colors.warning }]}>{formatMoney(card.debt, card.currency, { decimals: 2 })}</Text>
+            <Text style={styles.accSub}>borç</Text>
           </View>
         </View>
-      )}
-    </GlassCard>
+        {card.limit > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${usage}%`, backgroundColor: usage > 80 ? theme.colors.danger : usage > 50 ? theme.colors.warning : theme.colors.success }]} />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+              <Text style={styles.accSub}>{usage.toFixed(0)}% kullanım</Text>
+              <Text style={styles.accSub}>Limit: {formatMoney(card.limit, card.currency, { decimals: 0 })}</Text>
+            </View>
+          </View>
+        )}
+      </GlassCard>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: { paddingTop: 8, paddingBottom: 12 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, paddingBottom: 12 },
   title: { color: theme.colors.onSurface, fontSize: 28, fontWeight: '900', letterSpacing: -1 },
+  addBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.brand, alignItems: 'center', justifyContent: 'center' },
   segmentWrap: { flexDirection: 'row', backgroundColor: theme.colors.glass, borderRadius: theme.radius.pill, padding: 4, borderWidth: 1, borderColor: theme.colors.border },
   segment: { flex: 1, paddingVertical: 10, borderRadius: theme.radius.pill, alignItems: 'center' },
   segmentActive: { backgroundColor: theme.colors.brand },

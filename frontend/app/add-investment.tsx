@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, TextInput, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,13 +18,17 @@ const CURS: CurrencyCode[] = ['TRY', 'USD', 'RUB'];
 
 export default function AddInvestmentScreen() {
   const router = useRouter();
-  const [assetType, setAssetType] = useState<string>('stock');
-  const [symbol, setSymbol] = useState('');
-  const [name, setName] = useState('');
-  const [quantity, setQuantity] = useState('');
-  const [costBasis, setCostBasis] = useState('');
-  const [currentPrice, setCurrentPrice] = useState('');
-  const [currency, setCurrency] = useState<CurrencyCode>('TRY');
+  const params = useLocalSearchParams<{ id?: string; payload?: string }>();
+  const isEdit = !!params.id;
+  const initial = params.payload ? JSON.parse(decodeURIComponent(params.payload as string)) : null;
+
+  const [assetType, setAssetType] = useState<string>(initial?.asset_type || 'stock');
+  const [symbol, setSymbol] = useState(initial?.symbol || '');
+  const [name, setName] = useState(initial?.name || '');
+  const [quantity, setQuantity] = useState(initial?.quantity != null ? String(initial.quantity) : '');
+  const [costBasis, setCostBasis] = useState(initial?.cost_basis != null ? String(initial.cost_basis) : '');
+  const [currentPrice, setCurrentPrice] = useState(initial?.current_price != null ? String(initial.current_price) : '');
+  const [currency, setCurrency] = useState<CurrencyCode>(initial?.currency || 'TRY');
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -34,7 +38,7 @@ export default function AddInvestmentScreen() {
     if (!symbol.trim() || !q || !cb || !cp) return;
     setSaving(true);
     try {
-      await api.createInvestment({
+      const data = {
         symbol: symbol.toUpperCase(),
         name: name || symbol.toUpperCase(),
         asset_type: assetType,
@@ -42,7 +46,9 @@ export default function AddInvestmentScreen() {
         cost_basis: cb,
         current_price: cp,
         currency,
-      });
+      };
+      if (isEdit) await api.updateInvestment(params.id as string, data);
+      else await api.createInvestment(data);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
     } catch (e) {
@@ -50,6 +56,15 @@ export default function AddInvestmentScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const del = async () => {
+    if (!params.id) return;
+    setSaving(true);
+    try {
+      await api.deleteInvestment(params.id as string);
+      router.back();
+    } catch (e) { console.warn(e); } finally { setSaving(false); }
   };
 
   return (
@@ -61,7 +76,7 @@ export default function AddInvestmentScreen() {
             <Pressable testID="close-modal" onPress={() => router.back()} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color="#fff" />
             </Pressable>
-            <Text style={styles.title}>Yeni Yatırım</Text>
+            <Text style={styles.title}>{isEdit ? 'Yatırımı Düzenle' : 'Yeni Yatırım'}</Text>
             <View style={{ width: 40 }} />
           </View>
 
@@ -162,14 +177,21 @@ export default function AddInvestmentScreen() {
               </View>
             </View>
 
-            <Pressable
-              testID="save-investment-btn"
-              disabled={saving}
-              onPress={save}
-              style={styles.saveBtn}
-            >
-              <Text style={styles.saveText}>{saving ? 'Kaydediliyor...' : 'Kaydet'}</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 28 }}>
+              {isEdit && (
+                <Pressable testID="inv-delete" disabled={saving} onPress={del} style={[styles.saveBtn, { backgroundColor: theme.colors.dangerDim, borderWidth: 1, borderColor: theme.colors.danger, flex: 0, paddingHorizontal: 20 }]}>
+                  <Ionicons name="trash" size={18} color={theme.colors.danger} />
+                </Pressable>
+              )}
+              <Pressable
+                testID="save-investment-btn"
+                disabled={saving}
+                onPress={save}
+                style={[styles.saveBtn, { flex: 1, marginTop: 0 }]}
+              >
+                <Text style={styles.saveText}>{saving ? 'Kaydediliyor...' : isEdit ? 'Güncelle' : 'Kaydet'}</Text>
+              </Pressable>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

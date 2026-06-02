@@ -1,0 +1,45 @@
+{
+  "summary": "Finso iteration 2 tested end-to-end. Backend: 15/15 NEW pytest cases passed (test_finso_v2.py) covering /api/settings GET+PUT with persistence, /api/categories defaults (12+) and full CRUD, transactions w/ source_type+account_id/card_id verification, expense via card increases debt, expense via account decreases balance (and DELETE reverts both correctly), card_payment decreases both account balance AND card debt, PATCH account/card/transaction/investment all persist, /api/transfers same-currency + auto FX conversion (TRY→USD ≈ live rate) + manual to_amount override, /api/monthly-stats?months=6 returns 6 buckets with income/expense/net, /api/rates includes live_rates and custom_rates_enabled flag, /api/factory-reset clears everything and reseeds 12 default categories. Frontend (Expo web, mobile 390x844): dashboard renders Banka/Nakit/Dijital/Yatırım/Kart Borcu breakdown cards horizontally, monthly net flow chart with gelir/gider bars visible, settings-btn + transfer-btn navigate. Settings page → Döviz Kurları (live rates shown, toggle-custom-rates works), Kategoriler (expense/income filter, edit sheet with cat-name/cat-save/cat-delete present), Fabrika Ayarlarına Dön (reset-confirm wired to /api/factory-reset). Transfer modal renders from/to chips and switches to manual conversion. Add Transaction modal exposes 3 type chips (expense/income/card_payment), src-account/src-card toggle, acc-{id} and card-{id} chips populate correctly when toggling source. Edit flows reachable from Cüzdan/Harcamalar/Yatırımlar tabs by tapping rows; trash (delete) and save buttons visible in edit modes. Deprecated packages detected: none. Console warnings detected: shadow*/textShadow*/pointerEvents deprecations (non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "global", "issue": "Console: 'shadow*' style props deprecated → use 'boxShadow'. 'textShadow*' deprecated → use 'textShadow'. props.pointerEvents deprecated → use style.pointerEvents. Non-blocking."}
+    ],
+    "testid_naming_mismatches_vs_spec": [
+      {"spec": "tr-from-{id} / tr-to-{id}", "actual": "from-{id} / to-{id}", "file": "app/transfer.tsx:82,92"},
+      {"spec": "tx-save", "actual": "save-tx-btn", "file": "app/add-transaction.tsx:233"},
+      {"spec": "wallet-acc-*", "actual": "account-{id}", "file": "app/(tabs)/wallet.tsx:132"},
+      {"spec": "wallet-card-*", "actual": "card-holo-{id} or card-detail-{id}", "file": "app/(tabs)/wallet.tsx:158,193"},
+      {"spec": "add-transaction-btn (in Expenses tab)", "actual": "add-expense-btn", "file": "app/(tabs)/expenses.tsx:73"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_finso_v2.py",
+    "/app/backend/tests/test_finso_api.py",
+    "/app/test_reports/pytest/pytest_v2_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (testID polish to match spec): rename in code: from-/to- → tr-from-/tr-to-; save-tx-btn → tx-save; account-/card-holo-/card-detail- → wallet-acc-/wallet-card-; add-expense-btn → add-transaction-btn. Functionality is correct — only naming differs from review-request testIDs.",
+    "OPTIONAL: migrate deprecated shadow*/textShadow*/pointerEvents props to new web style API to silence RN-web warnings."
+  ],
+  "critical_code_review_comments": [
+    "Backend transaction effects (_apply_account_delta / _apply_card_delta) correctly convert cross-currency via TRY and revert on DELETE; verified for expense (card+account), income, card_payment.",
+    "Transfer endpoint creates a transfer-type transaction with to_account_id/to_amount/to_currency and correctly auto-converts using live rates or honors manual to_amount.",
+    "All GET endpoints exclude MongoDB _id via projection; no leakage observed.",
+    "ensure_categories() seeds 12 default categories on first request and after factory-reset; idempotent.",
+    "monthly-stats correctly buckets last N months and sums amount_try in TRY base.",
+    "server.py at ~760 lines is approaching split threshold (700). Consider modularizing accounts/cards/transactions/transfers/settings into separate routers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_finso_v2.py (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15 new + 11/11 prior)", "frontend": "100% of tested flows; testID names differ from spec but all UI elements present and functional"},
+  "seed_data_creation": "POST /api/seed?force=true used inside test fixture and again after factory-reset to restore demo state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public URL: https://finso-finance.preview.emergentagent.com. Frontend env key: EXPO_PUBLIC_BACKEND_URL. Backend tests: /app/backend/tests/test_finso_api.py (v1) + /app/backend/tests/test_finso_v2.py (v2). Seed via POST /api/seed?force=true before regression. TestID naming mismatches vs original spec are noted under frontend_issues.testid_naming_mismatches_vs_spec — UI works but selectors per spec will need to use the actual testIDs listed.",
+  "rca_of_issue": "No bugs found this iteration. Only naming inconsistencies between the review-request testIDs and the implemented testIDs. All requested behaviors (settings, edit/delete on all entities, transfer with currency conversion, source selector for transactions, monthly stats chart, card_payment type, factory reset) are implemented and pass backend assertions plus visual frontend checks."
+}
