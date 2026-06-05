@@ -22,3 +22,5 @@ jobs:
       - name: Build APK
         run: EAS_SKIP_AUTO_FINGERPRINT=1 eas build --platform android --profile preview --non-interactive
         working-directory: frontend
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
