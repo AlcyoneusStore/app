@@ -19,6 +19,11 @@ jobs:
       - name: Install dependencies
         run: npm install
         working-directory: frontend
+      - name: Init EAS
+        run: eas init --id f1febe04-3c4f-4468-97e9-a60190d9ebdd --non-interactive
+        working-directory: frontend
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       - name: Build APK
         run: EAS_SKIP_AUTO_FINGERPRINT=1 eas build --platform android --profile preview --non-interactive
         working-directory: frontend
